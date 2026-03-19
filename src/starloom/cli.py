@@ -1,0 +1,119 @@
+"""CLI entrypoint for starloom."""
+
+import argparse
+import logging
+import os
+import sys
+
+from dotenv import load_dotenv
+
+from . import config
+from .database import Database
+from .spacetrack_client import SpaceTrackClient
+from .fetcher import Fetcher
+
+
+def _make_client() -> SpaceTrackClient:
+    username = os.environ.get("SPACETRACK_USERNAME")
+    password = os.environ.get("SPACETRACK_PASSWORD")
+    if not username or not password:
+        print("Error: Set SPACETRACK_USERNAME and SPACETRACK_PASSWORD in .env")
+        sys.exit(1)
+    return SpaceTrackClient(username=username, password=password)
+
+
+def cmd_fetch(args: argparse.Namespace) -> None:
+    client = _make_client()
+    db = Database(args.db)
+
+    try:
+        client.login()
+        fetcher = Fetcher(client, db)
+        fetcher.run(
+            end_date=args.end_date,
+            dry_run=args.dry_run,
+        )
+    except KeyboardInterrupt:
+        logging.info("Interrupted — progress has been saved")
+    finally:
+        db.close()
+        client.close()
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    db = Database(args.db)
+    sats = db.get_satellite_count()
+    records = db.get_record_count()
+    batches = db.get_fetch_progress_count()
+    print(f"Database:           {args.db}")
+    print(f"Satellites tracked: {sats:,}")
+    print(f"GP history records: {records:,}")
+    print(f"Batches completed:  {batches:,}")
+    db.close()
+
+
+def cmd_catalog(args: argparse.Namespace) -> None:
+    client = _make_client()
+    db = Database(args.db)
+    try:
+        client.login()
+        catalog = client.fetch_starlink_catalog()
+        db.upsert_satellites(catalog)
+        print(f"Found {len(catalog)} Starlink satellites:\n")
+        for sat in catalog[:20]:
+            inc = float(sat.get("INCLINATION") or 0)
+            alt = float(sat.get("PERIAPSIS") or 0)
+            print(
+                f"  {sat['NORAD_CAT_ID']:>7}  {sat['OBJECT_NAME']:<25} "
+                f"inc={inc:5.1f}°  alt={alt:6.1f}km  "
+                f"launched={sat.get('LAUNCH_DATE', '?')}"
+            )
+        if len(catalog) > 20:
+            print(f"  ... and {len(catalog) - 20} more")
+    finally:
+        db.close()
+        client.close()
+
+
+def main() -> None:
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(
+        prog="starloom",
+        description="Starlink constellation data acquisition",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
+    sub = parser.add_subparsers(dest="command")
+
+    # fetch
+    p_fetch = sub.add_parser("fetch", help="Download GP history for all Starlink satellites")
+    p_fetch.add_argument("--db", default=config.DEFAULT_DB_PATH, help="Database path")
+    p_fetch.add_argument("--end-date", help="End date (default: today)")
+    p_fetch.add_argument("--dry-run", action="store_true", help="Show plan without fetching")
+
+    # status
+    p_status = sub.add_parser("status", help="Show fetch progress")
+    p_status.add_argument("--db", default=config.DEFAULT_DB_PATH)
+
+    # catalog
+    p_catalog = sub.add_parser("catalog", help="List all Starlink satellites")
+    p_catalog.add_argument("--db", default=config.DEFAULT_DB_PATH)
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    if args.command == "fetch":
+        cmd_fetch(args)
+    elif args.command == "status":
+        cmd_status(args)
+    elif args.command == "catalog":
+        cmd_catalog(args)

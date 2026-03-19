@@ -10,4 +10,5 @@ dependencies = [
 ]
 
 [project.scripts]
+starloom = "starloom.cli:main"
 test-spacetrack = "starloom.test_spacetrack:main"
