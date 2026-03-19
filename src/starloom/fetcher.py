@@ -49,38 +49,54 @@ class Fetcher:
         logger.info(f"Catalog: {count} Starlink satellites stored")
 
     def _build_work_items(
-        self, end_date: date
+        self, end_date: date, start_date: date | None = None
     ) -> list[tuple[list[int], str, str]]:
-        """Build work items grouped by launch date to skip impossible windows."""
+        """Build work items ordered by date window first, then satellite batch.
+
+        This means we get a snapshot of ALL satellites for each time period
+        before moving to the next, which is better for rendering early.
+        """
         satellites = self.db.get_satellites()  # sorted by launch date
 
-        # Group into batches of ids_per_batch
-        work_items: list[tuple[list[int], str, str]] = []
+        # Build satellite batches with their earliest applicable date
+        sat_batches: list[tuple[list[int], date]] = []
+        end = end_date
 
         for i in range(0, len(satellites), self.ids_per_batch):
             batch = satellites[i : i + self.ids_per_batch]
             norad_ids = [row[0] for row in batch]
             launch_dates = [row[1] for row in batch if row[1]]
 
-            # Start from earliest launch date in this batch (minus a day for early TLEs)
             if launch_dates:
                 earliest = date.fromisoformat(min(launch_dates)) - timedelta(days=1)
             else:
-                # No launch date = likely recent unassigned sats; query last 90 days
                 earliest = end - timedelta(days=90)
 
-            windows = _date_windows(earliest, end_date, self.days_per_batch)
-            for win_start, win_end in windows:
-                work_items.append((norad_ids, win_start, win_end))
+            sat_batches.append((norad_ids, earliest))
+
+        # Find the global earliest start date (or use override)
+        global_start = start_date or min(s[1] for s in sat_batches)
+        all_windows = _date_windows(global_start, end_date, self.days_per_batch)
+
+        # Iterate: date windows outer, satellite batches inner
+        # Skip batches whose satellites didn't exist yet in that window
+        work_items: list[tuple[list[int], str, str]] = []
+        for win_start, win_end in all_windows:
+            win_start_date = date.fromisoformat(win_start)
+            for norad_ids, batch_earliest in sat_batches:
+                if win_start_date >= batch_earliest:
+                    work_items.append((norad_ids, win_start, win_end))
 
         return work_items
 
     def run(
         self,
+        start_date: str | None = None,
         end_date: str | None = None,
         dry_run: bool = False,
     ) -> None:
         """Run the full fetch pipeline."""
+        start = date.fromisoformat(start_date) if start_date else None
         end = date.fromisoformat(end_date or date.today().isoformat())
 
         # Phase 1: discover all Starlink satellites
@@ -92,7 +108,7 @@ class Fetcher:
             return
 
         # Phase 2: generate work items (launch-date-aware)
-        work_items = self._build_work_items(end)
+        work_items = self._build_work_items(end, start)
         total_items = len(work_items)
 
         # Count how many are already done

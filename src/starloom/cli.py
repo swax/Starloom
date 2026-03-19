@@ -11,6 +11,7 @@ from . import config
 from .database import Database
 from .spacetrack_client import SpaceTrackClient
 from .fetcher import Fetcher
+from .render import render_frame
 
 
 def _make_client() -> SpaceTrackClient:
@@ -30,6 +31,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         client.login()
         fetcher = Fetcher(client, db)
         fetcher.run(
+            start_date=args.start_date,
             end_date=args.end_date,
             dry_run=args.dry_run,
         )
@@ -88,6 +90,7 @@ def main() -> None:
     # fetch
     p_fetch = sub.add_parser("fetch", help="Download GP history for all Starlink satellites")
     p_fetch.add_argument("--db", default=config.DEFAULT_DB_PATH, help="Database path")
+    p_fetch.add_argument("--start-date", help="Start date (default: per satellite launch date)")
     p_fetch.add_argument("--end-date", help="End date (default: today)")
     p_fetch.add_argument("--dry-run", action="store_true", help="Show plan without fetching")
 
@@ -98,6 +101,19 @@ def main() -> None:
     # catalog
     p_catalog = sub.add_parser("catalog", help="List all Starlink satellites")
     p_catalog.add_argument("--db", default=config.DEFAULT_DB_PATH)
+
+    # import-launches
+    p_import = sub.add_parser("import-launches", help="Import launch data from xlsx")
+    p_import.add_argument("xlsx", help="Path to starlink_launches.xlsx")
+    p_import.add_argument("--db", default=config.DEFAULT_DB_PATH)
+
+    # render
+    p_render = sub.add_parser("render", help="Render a single frame")
+    p_render.add_argument("timestamp", help="Timestamp to render (e.g. 2019-07-01)")
+    p_render.add_argument("--db", default=config.DEFAULT_DB_PATH)
+    p_render.add_argument("--output", "-o", default="frame.png", help="Output file path")
+    p_render.add_argument("--width", type=int, default=1920)
+    p_render.add_argument("--height", type=int, default=1080)
 
     args = parser.parse_args()
 
@@ -117,3 +133,18 @@ def main() -> None:
         cmd_status(args)
     elif args.command == "catalog":
         cmd_catalog(args)
+    elif args.command == "import-launches":
+        from .import_launches import import_launches
+        db = Database(args.db)
+        try:
+            import_launches(db, args.xlsx)
+        finally:
+            db.close()
+    elif args.command == "render":
+        from datetime import datetime
+        db = Database(args.db)
+        try:
+            ts = datetime.fromisoformat(args.timestamp)
+            render_frame(db, ts, args.output, args.width, args.height)
+        finally:
+            db.close()

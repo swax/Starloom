@@ -20,15 +20,25 @@ GP_COLUMNS = [
 ]
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS launches (
+    cospar_id       TEXT PRIMARY KEY,
+    mission_name    TEXT NOT NULL,
+    shell           TEXT NOT NULL,
+    launch_date     TEXT NOT NULL,
+    sats_launched   INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS satellites (
     NORAD_CAT_ID    INTEGER PRIMARY KEY,
     OBJECT_NAME     TEXT,
+    OBJECT_ID       TEXT,
     LAUNCH_DATE     TEXT,
     DECAY_DATE      TEXT,
     INCLINATION     REAL,
     PERIOD          REAL,
     APOAPSIS        REAL,
-    PERIAPSIS       REAL
+    PERIAPSIS       REAL,
+    cospar_id       TEXT REFERENCES launches(cospar_id)
 );
 
 CREATE TABLE IF NOT EXISTS gp_history (
@@ -92,18 +102,35 @@ class Database:
         self._conn.commit()
         logger.info(f"Database opened: {db_path}")
 
+    def upsert_launches(self, launches: list[dict]) -> int:
+        """Store launch data from xlsx. Returns count inserted/updated."""
+        sql = (
+            "INSERT OR REPLACE INTO launches "
+            "(cospar_id, mission_name, shell, launch_date, sats_launched) "
+            "VALUES (?, ?, ?, ?, ?)"
+        )
+        rows = [
+            (l["cospar_id"], l["mission_name"], l["shell"],
+             l["launch_date"], l["sats_launched"])
+            for l in launches
+        ]
+        self._conn.executemany(sql, rows)
+        self._conn.commit()
+        return len(rows)
+
     def upsert_satellites(self, catalog: list[dict]) -> int:
         """Store satellite catalog entries. Returns count inserted/updated."""
         sql = (
             "INSERT OR REPLACE INTO satellites "
-            "(NORAD_CAT_ID, OBJECT_NAME, LAUNCH_DATE, DECAY_DATE, "
+            "(NORAD_CAT_ID, OBJECT_NAME, OBJECT_ID, LAUNCH_DATE, DECAY_DATE, "
             "INCLINATION, PERIOD, APOAPSIS, PERIAPSIS) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         rows = [
             (
                 int(sat["NORAD_CAT_ID"]),
                 sat.get("OBJECT_NAME"),
+                sat.get("OBJECT_ID"),
                 sat.get("LAUNCH_DATE"),
                 sat.get("DECAY_DATE"),
                 sat.get("INCLINATION"),
@@ -116,6 +143,18 @@ class Database:
         self._conn.executemany(sql, rows)
         self._conn.commit()
         return len(rows)
+
+    def link_satellites_to_launches(self) -> int:
+        """Link satellites to launches via COSPAR ID prefix match. Returns count linked."""
+        cursor = self._conn.execute("""
+            UPDATE satellites SET cospar_id = (
+                SELECT l.cospar_id FROM launches l
+                WHERE satellites.OBJECT_ID LIKE l.cospar_id || '%'
+            )
+            WHERE OBJECT_ID IS NOT NULL
+        """)
+        self._conn.commit()
+        return cursor.rowcount
 
     def get_satellites(self) -> list[tuple[int, str | None]]:
         """Return all satellites as (NORAD_CAT_ID, LAUNCH_DATE) sorted by launch date.
