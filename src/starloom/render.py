@@ -19,24 +19,22 @@ MU = 398600.4418  # km³/s²
 # Reference epoch for co-precessing frame
 REFERENCE_EPOCH = datetime(2019, 5, 24)  # First Starlink launch
 
-# Shell colors — visually distinct on black background
-SHELL_COLORS = {
-    "Prototype":              "#888888",  # gray
-    "Gen1 Shell 1 (53°)":    "#4FC3F7",  # light blue
-    "Gen1 Shell 2 (70°)":    "#FF8A65",  # orange
-    "Gen1 Shell 3 (polar 97.6°)": "#CE93D8",  # purple
-    "Gen1 Shell 4 (53.2°)":  "#81C784",  # green
-    "Gen1 Shell 5 (43°)":    "#FFF176",  # yellow
-    "Gen2 Shell 1 (53°)":    "#29B6F6",  # blue
-    "Gen2 Shell 2 (43°)":    "#FFD54F",  # amber
-    "Gen2 Shell 3 (70°)":    "#FF7043",  # deep orange
-    "Gen2 Shell 4 (97°)":    "#AB47BC",  # deep purple
-    "Gen2 DTC Shell 1 (53°)": "#26C6DA",  # cyan
-    "Gen2 DTC Shell 2 (43°)": "#FFCA28",  # gold
-    "Shell 3 (70°, NRO)":    "#EF5350",  # red
-    "Shell 3 (polar)":       "#EC407A",  # pink
-}
+# Inclination bands: (min, max, color, label)
+INCLINATION_BANDS = [
+    (41, 45, "#FFD54F", "43°"),
+    (51, 55, "#42A5F5", "53°"),
+    (68, 72, "#FF7043", "70°"),
+    (95, 100, "#AB47BC", "97°"),
+]
 DEFAULT_COLOR = "#FFFFFF"
+
+
+def _color_for_inclination(inc: float) -> tuple[str, str]:
+    """Return (color, label) for a given inclination."""
+    for lo, hi, color, label in INCLINATION_BANDS:
+        if lo <= inc <= hi:
+            return color, label
+    return DEFAULT_COLOR, f"{inc:.0f}°"
 
 
 def _j2_raan_precession_rate(inclination_deg: float, semi_major_axis_km: float,
@@ -51,13 +49,14 @@ def _j2_raan_precession_rate(inclination_deg: float, semi_major_axis_km: float,
     return math.degrees(rate_rad_s) * 86400  # convert to deg/day
 
 
-def _nominal_precession_rate() -> float:
-    """Reference precession rate for the 53° shell at 550km."""
+def _precession_rate_for_inclination(inc_deg: float) -> float:
+    """Reference precession rate for a given inclination at typical Starlink altitude."""
     a = R_EARTH_KM + 550
-    return _j2_raan_precession_rate(53.0, a, 0.0001)
+    return _j2_raan_precession_rate(inc_deg, a, 0.0001)
 
 
-def get_frame_data(db: Database, timestamp: datetime) -> list[dict]:
+def get_frame_data(db: Database, timestamp: datetime,
+                   ref_inclination: float | None = None) -> list[dict]:
     """Get satellite positions for a given timestamp.
 
     Finds the nearest TLE for each satellite within ±1 day of the timestamp,
@@ -65,7 +64,7 @@ def get_frame_data(db: Database, timestamp: datetime) -> list[dict]:
     """
     ts_str = timestamp.isoformat()
 
-    rows = db._conn.execute("""
+    all_rows = db._conn.execute("""
         SELECT
             h.NORAD_CAT_ID,
             h.OBJECT_NAME,
@@ -79,41 +78,60 @@ def get_frame_data(db: Database, timestamp: datetime) -> list[dict]:
             h.MEAN_MOTION,
             l.shell
         FROM gp_history h
-        INNER JOIN (
-            SELECT NORAD_CAT_ID, MIN(ABS(julianday(EPOCH) - julianday(?))) as min_diff
-            FROM gp_history
-            WHERE ABS(julianday(EPOCH) - julianday(?)) < 1.0
-            GROUP BY NORAD_CAT_ID
-        ) nearest ON h.NORAD_CAT_ID = nearest.NORAD_CAT_ID
-            AND ABS(julianday(h.EPOCH) - julianday(?)) = nearest.min_diff
         LEFT JOIN satellites s ON h.NORAD_CAT_ID = s.NORAD_CAT_ID
         LEFT JOIN launches l ON s.cospar_id = l.cospar_id
-    """, (ts_str, ts_str, ts_str)).fetchall()
+        WHERE ABS(julianday(h.EPOCH) - julianday(?)) < 1.0
+        ORDER BY h.NORAD_CAT_ID, ABS(julianday(h.EPOCH) - julianday(?))
+    """, (ts_str, ts_str)).fetchall()
 
-    ref_rate = _nominal_precession_rate()  # deg/day
+    # Keep only the nearest TLE per satellite
+    seen: set[int] = set()
+    rows = []
+    for row in all_rows:
+        norad_id = row[0]
+        if norad_id not in seen:
+            seen.add(norad_id)
+            rows.append(row)
+
+    # Cache precession rates by rounded inclination
+    precession_cache: dict[float, float] = {}
 
     points = []
     for row in rows:
         (norad_id, name, epoch_str, inc, raan, argp, ma,
          ecc, sma, mm, shell) = row
 
-        if any(v is None for v in (inc, raan, argp, ma, mm)):
+        if any(v is None for v in (inc, raan, argp, ma, mm, sma)):
             continue
 
+        inc_f = float(inc)
         epoch = datetime.fromisoformat(epoch_str)
         dt_days = (timestamp - epoch).total_seconds() / 86400
 
         # Propagate mean anomaly to target timestamp
-        # Mean motion is in revolutions/day, convert to degrees/day
         mm_deg_per_day = float(mm) * 360.0
         propagated_ma = (float(ma) + mm_deg_per_day * dt_days) % 360.0
 
         # Argument of latitude (anomaly past ascending node)
         arg_lat = (float(argp) + propagated_ma) % 360.0
 
-        # Co-precessing RAAN: remove reference precession drift
+        # Co-precessing RAAN: use per-satellite inclination by default,
+        # or the specified reference inclination if filtering
+        rate_inc = ref_inclination if ref_inclination is not None else inc_f
+        inc_key = round(rate_inc, 1)
+        if inc_key not in precession_cache:
+            precession_cache[inc_key] = _precession_rate_for_inclination(rate_inc)
+        ref_rate = precession_cache[inc_key]
+
         days_since_ref = (epoch - REFERENCE_EPOCH).total_seconds() / 86400
         co_raan = (float(raan) - ref_rate * days_since_ref) % 360.0
+
+        # Altitude from semi-major axis
+        altitude = float(sma) - R_EARTH_KM
+
+        # Operational if above 350km (below = deorbiting or raising)
+        # Sats below ~300km are clearly deorbiting, 300-350 is marginal
+        operational = altitude >= 350
 
         points.append({
             "norad_id": norad_id,
@@ -122,46 +140,79 @@ def get_frame_data(db: Database, timestamp: datetime) -> list[dict]:
             "co_raan": co_raan,
             "inclination": float(inc),
             "shell": shell,
+            "altitude": altitude,
+            "operational": operational,
         })
 
     return points
 
 
 def render_frame(db: Database, timestamp: datetime, output_path: str,
-                 width: int = 1920, height: int = 1080) -> None:
+                 width: int = 1920, height: int = 1080,
+                 inclination: float | None = None, inc_tolerance: float = 2.0) -> None:
     """Render a single frame to an image file."""
-    points = get_frame_data(db, timestamp)
+    points = get_frame_data(db, timestamp, ref_inclination=inclination)
+
+    if inclination is not None:
+        points = [p for p in points
+                  if abs(p["inclination"] - inclination) <= inc_tolerance]
     logger.info(f"Rendering {len(points)} satellites at {timestamp.isoformat()}")
 
     if not points:
         logger.warning("No data for this timestamp")
         return
 
+    # Scale sizes relative to 1080p baseline
+    scale = height / 1080
     dpi = 100
     fig, ax = plt.subplots(figsize=(width / dpi, height / dpi), dpi=dpi)
     fig.set_facecolor("black")
     ax.set_facecolor("black")
 
-    # Group by shell for color-coding and legend
-    shells: dict[str | None, list[dict]] = {}
+    # Group by shell for legend, but color dots by actual inclination
+    shells: dict[str, list[dict]] = {}
     for p in points:
-        shells.setdefault(p["shell"], []).append(p)
+        shells.setdefault(p["shell"] or "Unknown", []).append(p)
 
-    for shell, pts in sorted(shells.items(), key=lambda kv: kv[0] or ""):
-        x = [p["co_raan"] for p in pts]
-        y = [p["arg_lat"] for p in pts]
-        color = SHELL_COLORS.get(shell or "", DEFAULT_COLOR)
-        label = shell or "Unknown"
-        ax.scatter(x, y, s=20, c=color, edgecolors="none", linewidths=0,
-                   label=f"{label} ({len(pts)})", alpha=0.85)
+    op_count = sum(1 for p in points if p["operational"])
+    non_op_count = len(points) - op_count
+
+    # Draw dots colored by actual inclination
+    for operational, alpha, size in [(False, 0.2, 2 * scale), (True, 0.9, 3 * scale)]:
+        filtered = [p for p in points if p["operational"] == operational]
+        if not filtered:
+            continue
+        x = [p["co_raan"] for p in filtered]
+        y = [p["arg_lat"] for p in filtered]
+        colors = [_color_for_inclination(p["inclination"])[0] for p in filtered]
+        ax.scatter(x, y, s=size, c=colors, edgecolors="none", linewidths=0, alpha=alpha)
+
+    # Add invisible legend entries per shell (colored by shell's inclination band)
+    for shell_name, pts in sorted(shells.items()):
+        avg_inc = sum(p["inclination"] for p in pts) / len(pts)
+        color, _ = _color_for_inclination(avg_inc)
+        ax.scatter([], [], s=10 * scale, c=color, label=f"{shell_name} ({len(pts)})")
 
     ax.set_xlim(0, 360)
     ax.set_ylim(360, 0)  # 0 at top, 360 at bottom
-    ax.set_xlabel("Co-precessing Longitude of Ascending Node (°)", color="white")
-    ax.set_ylabel("Anomaly Past Ascending Node (°)", color="white")
-    ax.set_title(timestamp.strftime("%Y-%m-%d %H:%M UTC"), color="white", fontsize=14)
+    ax.set_xlabel("Co-precessing Longitude of Ascending Node (°)",
+                  color="white", fontsize=10 * scale, labelpad=10 * scale)
+    ax.set_ylabel("Anomaly Past Ascending Node (°)",
+                  color="white", fontsize=10 * scale, labelpad=10 * scale)
 
-    ax.tick_params(colors="white")
+    # Title
+    if inclination is not None:
+        title_text = f"Starlink Constellation at {inclination:.0f}° — {op_count:,} operational, {non_op_count:,} transitioning"
+    else:
+        title_text = f"Starlink Constellation — {op_count:,} operational, {non_op_count:,} transitioning"
+    fig.text(0.06, 0.97, title_text,
+             color="white", fontsize=14 * scale, fontweight="bold", va="top")
+    fig.text(0.98, 0.97, "Rendered with Starloom",
+             color="gray", fontsize=10 * scale, va="top", ha="right")
+    fig.text(0.60, 0.97, timestamp.strftime("%Y-%m-%d %H:%M UTC"),
+             color="white", fontsize=14 * scale, va="top", ha="center")
+
+    ax.tick_params(colors="white", labelsize=9 * scale)
     for spine in ax.spines.values():
         spine.set_color("white")
 
@@ -170,11 +221,11 @@ def render_frame(db: Database, timestamp: datetime, output_path: str,
     ax.grid(True, alpha=0.15, color="white")
 
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.08),
-              ncol=min(len(shells), 5), fontsize=11, framealpha=0.3,
+              ncol=min(len(shells), 5), fontsize=11 * scale, framealpha=0.3,
               facecolor="black", edgecolor="gray", labelcolor="white",
-              markerscale=1.2)
+              markerscale=1.2 * scale)
 
-    plt.subplots_adjust(left=0.06, right=0.98, top=0.95, bottom=0.13)
+    plt.subplots_adjust(left=0.06, right=0.98, top=0.95, bottom=0.17)
     plt.savefig(output_path, facecolor="black", dpi=dpi)
     plt.close()
     logger.info(f"Saved: {output_path}")

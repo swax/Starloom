@@ -119,12 +119,17 @@ class Database:
         return len(rows)
 
     def upsert_satellites(self, catalog: list[dict]) -> int:
-        """Store satellite catalog entries. Returns count inserted/updated."""
+        """Store satellite catalog entries, preserving existing cospar_id links."""
         sql = (
-            "INSERT OR REPLACE INTO satellites "
+            "INSERT INTO satellites "
             "(NORAD_CAT_ID, OBJECT_NAME, OBJECT_ID, LAUNCH_DATE, DECAY_DATE, "
             "INCLINATION, PERIOD, APOAPSIS, PERIAPSIS) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(NORAD_CAT_ID) DO UPDATE SET "
+            "OBJECT_NAME=excluded.OBJECT_NAME, OBJECT_ID=excluded.OBJECT_ID, "
+            "LAUNCH_DATE=excluded.LAUNCH_DATE, DECAY_DATE=excluded.DECAY_DATE, "
+            "INCLINATION=excluded.INCLINATION, PERIOD=excluded.PERIOD, "
+            "APOAPSIS=excluded.APOAPSIS, PERIAPSIS=excluded.PERIAPSIS"
         )
         rows = [
             (

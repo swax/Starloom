@@ -114,6 +114,7 @@ def main() -> None:
     p_render.add_argument("--output", "-o", default="frame.png", help="Output file path")
     p_render.add_argument("--width", type=int, default=1920)
     p_render.add_argument("--height", type=int, default=1080)
+    p_render.add_argument("--inclination", type=float, help="Filter to specific inclination (e.g. 53)")
 
     args = parser.parse_args()
 
@@ -145,6 +146,7 @@ def main() -> None:
         db = Database(args.db)
         try:
             ts = datetime.fromisoformat(args.timestamp)
-            render_frame(db, ts, args.output, args.width, args.height)
+            render_frame(db, ts, args.output, args.width, args.height,
+                         inclination=args.inclination)
         finally:
             db.close()
