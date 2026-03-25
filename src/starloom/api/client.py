@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -116,15 +116,19 @@ class SpaceTrackClient:
             "/format/json"
         )
 
-    def fetch_gp_history_batch(
-        self, norad_ids: list[int], epoch_start: str, epoch_end: str
-    ) -> list[dict]:
-        """Fetch GP history for a batch of satellites within an epoch window."""
-        ids_str = ",".join(str(i) for i in norad_ids)
+    def fetch_gp_history_by_date(self, creation_date: str) -> list[dict]:
+        """Fetch all GP history records created on a given date.
+
+        Uses the CREATION_DATE one-day-at-a-time approach required by
+        Space-Track.org — no per-object (NORAD_CAT_ID) filtering.
+        Caller is responsible for filtering to satellites of interest.
+        """
+        next_day = (
+            date.fromisoformat(creation_date) + timedelta(days=1)
+        ).isoformat()
         return self.query(
             f"/class/gp_history"
-            f"/NORAD_CAT_ID/{ids_str}"
-            f"/epoch/{epoch_start}--{epoch_end}"
+            f"/CREATION_DATE/{creation_date}--{next_day}"
             f"/orderby/NORAD_CAT_ID,EPOCH asc"
             f"/format/json"
         )

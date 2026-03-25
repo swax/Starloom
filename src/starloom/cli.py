@@ -47,11 +47,14 @@ def cmd_status(args: argparse.Namespace) -> None:
     db = Database(args.db)
     sats = db.get_satellite_count()
     records = db.get_record_count()
-    batches = db.get_fetch_progress_count()
+    days = db.get_days_fetched_count()
+    latest = db.get_latest_fetched_date()
     print(f"Database:           {args.db}")
     print(f"Satellites tracked: {sats:,}")
     print(f"GP history records: {records:,}")
-    print(f"Batches completed:  {batches:,}")
+    print(f"Days fetched (API): {days:,}")
+    if latest:
+        print(f"Latest fetch date:  {latest}")
     db.close()
 
 

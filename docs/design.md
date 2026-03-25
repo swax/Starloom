@@ -1,6 +1,6 @@
 Data Source
 
-Space-Track.org is still the primary source. You'll need a free account. Their API lets you bulk-download TLE (Two-Line Element) data for all Starlink satellites by NORAD catalog number or international designator. The key endpoint is the gp_history class, which gives you historical orbital elements over time. Expect a lot of data — there are now ~7,000+ Starlink satellites, each with TLEs every ~8 hours over years. You'll want to batch your queries by launch group and date range to stay within rate limits.
+Space-Track.org is still the primary source. You'll need a free account. Historical TLE data (pre-2026) comes from bulk yearly TLE archives. For 2026 onward, the gp_history API is queried one day at a time by CREATION_DATE — no per-object (NORAD_CAT_ID) queries. Expect a lot of data — there are now ~11,000+ Starlink satellites, each with TLEs every ~8 hours over years.
 
 Supplementary sources: CelesTrak (celestrak.org) mirrors Space-Track data and is sometimes easier for bulk pulls. Jonathan McDowell's catalog (planet4589.org) is excellent for launch groupings and satellite status tracking.
 

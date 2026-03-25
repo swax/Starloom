@@ -83,13 +83,10 @@ CREATE INDEX IF NOT EXISTS idx_gp_norad_epoch
 CREATE INDEX IF NOT EXISTS idx_gp_epoch
     ON gp_history(EPOCH);
 
-CREATE TABLE IF NOT EXISTS fetch_progress (
-    norad_cat_ids   TEXT NOT NULL,
-    epoch_start     TEXT NOT NULL,
-    epoch_end       TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS daily_fetch_progress (
+    creation_date   TEXT PRIMARY KEY,
     fetched_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    record_count    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (norad_cat_ids, epoch_start, epoch_end)
+    record_count    INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -195,29 +192,26 @@ class Database:
         cursor = self._conn.executemany(sql, rows)
         return cursor.rowcount
 
-    def mark_batch_fetched(
-        self,
-        norad_cat_ids: str,
-        epoch_start: str,
-        epoch_end: str,
-        record_count: int,
-    ) -> None:
+    def mark_date_fetched(self, creation_date: str, record_count: int) -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO fetch_progress "
-            "(norad_cat_ids, epoch_start, epoch_end, record_count) "
-            "VALUES (?, ?, ?, ?)",
-            (norad_cat_ids, epoch_start, epoch_end, record_count),
+            "INSERT OR REPLACE INTO daily_fetch_progress "
+            "(creation_date, record_count) VALUES (?, ?)",
+            (creation_date, record_count),
         )
 
-    def is_batch_fetched(
-        self, norad_cat_ids: str, epoch_start: str, epoch_end: str
-    ) -> bool:
+    def is_date_fetched(self, creation_date: str) -> bool:
         row = self._conn.execute(
-            "SELECT 1 FROM fetch_progress "
-            "WHERE norad_cat_ids = ? AND epoch_start = ? AND epoch_end = ?",
-            (norad_cat_ids, epoch_start, epoch_end),
+            "SELECT 1 FROM daily_fetch_progress WHERE creation_date = ?",
+            (creation_date,),
         ).fetchone()
         return row is not None
+
+    def get_latest_fetched_date(self) -> str | None:
+        """Return the latest creation_date in daily_fetch_progress, or None."""
+        row = self._conn.execute(
+            "SELECT MAX(creation_date) FROM daily_fetch_progress"
+        ).fetchone()
+        return row[0] if row and row[0] else None
 
     def commit(self) -> None:
         self._conn.commit()
@@ -226,8 +220,10 @@ class Database:
         row = self._conn.execute("SELECT COUNT(*) FROM gp_history").fetchone()
         return row[0]
 
-    def get_fetch_progress_count(self) -> int:
-        row = self._conn.execute("SELECT COUNT(*) FROM fetch_progress").fetchone()
+    def get_days_fetched_count(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM daily_fetch_progress"
+        ).fetchone()
         return row[0]
 
     def get_latest_epoch(self) -> str | None:

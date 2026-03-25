@@ -35,15 +35,26 @@ uv run starloom import-launches data/launches.xlsx
 
 This links each satellite to its mission and shell (Gen1 Shell 1, Gen2 Shell 2, etc.) via COSPAR ID matching.
 
+## Space-Track API Compliance
+
+This project follows the query guidelines provided by the Space-Track.org team to stay within acceptable usage limits:
+
+1. **Bulk files for historical data** — All TLEs prior to 2026 come from Space-Track's yearly bulk TLE archives. These are never re-queried via the API.
+2. **One API query per day by CREATION_DATE** — To keep up with new TLEs published in 2026+, the API is queried one day at a time using:
+   ```
+   /class/gp_history/CREATION_DATE/{date}--{next_day}/format/json
+   ```
+3. **No per-object queries** — The API is never filtered by individual NORAD_CAT_ID. Starlink records are filtered client-side after fetching each day's full results.
+4. **No re-downloading** — Each day's query runs once. Completed days are tracked in `daily_fetch_progress` and skipped on subsequent runs.
+5. **Rate limiting** — Requests are paced at one per minute, well under the limits of 30/minute and 300/hour. The satellite catalog (GP class) is queried at most once per hour.
+
 ## Downloading Data
 
-Historical orbital data can come from two sources: **bulk TLE files** (preferred for historical data) and the **Space-Track API** (for recent data only). The `fetch` command handles both automatically.
+Historical orbital data comes from two sources: **bulk TLE files** (for everything before 2026) and the **Space-Track API** (for 2026 onward, one day at a time). The `fetch` command handles both automatically.
 
 ### Step 1: Download Bulk TLE Files
 
-Space-Track provides yearly TLE archives covering all tracked objects. These are the recommended way to get historical data — the `gp_history` API is intended for small, ad-hoc queries only.
-
-> **Warning:** Space-Track will suspend your account if you make excessive `gp_history` API requests, even at compliant request rates. Always use bulk files for historical data.
+Space-Track provides yearly TLE archives covering all tracked objects. These cover all data through the end of 2025.
 
 1. Download the yearly `.txt` files from Space-Track's cloud storage:
    https://ln5.sync.com/dl/afd354190/c5cd2q72-a5qjzp4q-nbjdiqkr-cenajuqu
@@ -51,12 +62,12 @@ Space-Track provides yearly TLE archives covering all tracked objects. These are
 
 ```bash
 mkdir -p data/bulk
-# Download tle2019.txt through tle2025.txt (or current year) into data/bulk/
+# Download tle2019.txt through tle2025.txt into data/bulk/
 ```
 
 ### Step 2: Populate the Satellite Catalog
 
-The catalog tells starloom which NORAD IDs are Starlink satellites, so it can filter the bulk files (which contain all satellites).
+The catalog tells starloom which NORAD IDs are Starlink satellites, so it can filter the bulk files and API results (which contain all satellites).
 
 ```bash
 uv run starloom catalog
@@ -67,7 +78,7 @@ uv run starloom catalog
 The `fetch` command will:
 1. Refresh the satellite catalog (falls back to existing data if the API is unavailable)
 2. Import any bulk TLE files found in `data/bulk/`
-3. Calculate remaining gaps between the bulk data and today
+3. Step through each day from 2026-01-01 (or the last fetched date) to yesterday, one API request per day
 4. **Ask for confirmation** before making any API requests, showing the request count and estimated time
 
 ```bash
@@ -77,8 +88,8 @@ uv run starloom fetch --dry-run
 # Run the full pipeline (bulk import + API gap-fill)
 uv run starloom fetch
 
-# Fetch a specific date range via API only
-uv run starloom fetch --start-date 2024-01-01 --end-date 2024-02-01
+# Fetch a specific date range via API
+uv run starloom fetch --start-date 2026-01-01 --end-date 2026-02-01
 
 # Point to a different bulk file directory
 uv run starloom fetch --bulk-dir /path/to/tle/files
@@ -87,7 +98,7 @@ uv run starloom fetch --bulk-dir /path/to/tle/files
 uv run starloom -v fetch
 ```
 
-API requests are paced at one every 18 seconds (~200/hr, well under the 30/min and 300/hr limits). Ctrl+C is safe — progress is saved and the next run resumes where it left off.
+API requests are paced at one per minute. Each request fetches a full day of data, so catching up a full year (worst case, no bulk TLE available) takes ~6 hours. Ctrl+C is safe — progress is saved per-day and the next run resumes where it left off.
 
 ### Verifying Bulk Data
 

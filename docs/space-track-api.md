@@ -24,9 +24,9 @@ GET https://www.space-track.org/ajaxauth/logout
 ## Rate Limits
 
 - **30 requests per minute, 300 requests per hour**
-- **GP (current TLEs):** max 1 query/hour
-- **GP_HISTORY:** 1/lifetime — download once, store locally, never re-download
-- Use comma-delimited NORAD_CAT_ID lists to minimize request count
+- **GP (current TLEs):** max 1 query/hour, randomize the minute
+- **GP_HISTORY:** Query by CREATION_DATE, one day at a time. Do NOT query by individual NORAD_CAT_ID.
+- Pre-2026 data: use bulk TLE zip files from Space-Track's cloud storage.
 
 ## API Classes We Use
 
@@ -37,12 +37,12 @@ GET /basicspacedata/query/class/gp/OBJECT_NAME/STARLINK~~/orderby/NORAD_CAT_ID/f
 ```
 
 ### GP_HISTORY (historical orbital elements)
-All historical element sets. Limit queries by NORAD_CAT_ID list AND short epoch range to avoid "Query range out of bounds" errors.
+Query one day at a time by CREATION_DATE. Do not filter by NORAD_CAT_ID — filter client-side instead.
 ```
-GET /basicspacedata/query/class/gp_history/NORAD_CAT_ID/25544,25545/epoch/2024-01-01--2024-01-03/orderby/NORAD_CAT_ID,EPOCH asc/format/json
+GET /basicspacedata/query/class/gp_history/CREATION_DATE/2026-01-01--2026-01-02/orderby/NORAD_CAT_ID,EPOCH asc/format/json
 ```
 
-For large date ranges, Space-Track recommends downloading TLE zip files by year from their cloud storage instead.
+Each day's query only needs to run once — Space-Track does not insert TLEs retroactively.
 
 ## REST Operators
 
