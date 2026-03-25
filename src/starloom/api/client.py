@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from . import config
+from .. import config
 
 logger = logging.getLogger(__name__)
 

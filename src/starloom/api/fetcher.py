@@ -4,9 +4,9 @@ import logging
 import os
 from datetime import date, timedelta
 
-from . import config
-from .database import Database
-from .spacetrack_client import SpaceTrackClient
+from .. import config
+from ..database import Database
+from .client import SpaceTrackClient
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class Fetcher:
         if not os.path.isdir(bulk_dir):
             return
 
-        from .bulk_import import _collect_files, import_bulk
+        from ..bulk.importer import _collect_files, import_bulk
 
         files = _collect_files(bulk_dir)
         if not files:
@@ -150,7 +150,7 @@ class Fetcher:
                     f"Existing data through {start}, fetching from there"
                 )
 
-        # Phase 2: generate work items (launch-date-aware)
+        # Phase 3: generate work items (launch-date-aware)
         work_items = self._build_work_items(end, start)
         total_items = len(work_items)
 
@@ -185,7 +185,7 @@ class Fetcher:
             print("Aborted.")
             return
 
-        # Phase 3: execute
+        # Phase 4: execute
         completed = 0
         total_records = 0
 

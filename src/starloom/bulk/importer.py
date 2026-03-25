@@ -5,7 +5,7 @@ import logging
 import os
 import zipfile
 
-from .database import Database
+from ..database import Database
 from .tle_parser import parse_tle_lines
 
 logger = logging.getLogger(__name__)

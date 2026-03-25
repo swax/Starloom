@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 
 from . import config
 from .database import Database
-from .spacetrack_client import SpaceTrackClient
-from .fetcher import Fetcher
+from .api.client import SpaceTrackClient
+from .api.fetcher import Fetcher
 from .render import render_frame
 
 
@@ -156,7 +156,7 @@ def main() -> None:
         finally:
             db.close()
     elif args.command == "import-bulk":
-        from .bulk_import import import_bulk
+        from .bulk.importer import import_bulk
         db = Database(args.db)
         try:
             import_bulk(db, args.path)
@@ -167,7 +167,7 @@ def main() -> None:
         finally:
             db.close()
     elif args.command == "verify-bulk":
-        from .verify_bulk import verify_bulk
+        from .bulk.verify import verify_bulk
         db = Database(args.db)
         try:
             verify_bulk(db, args.path, sample_size=args.sample_size)
