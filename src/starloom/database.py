@@ -230,6 +230,16 @@ class Database:
         row = self._conn.execute("SELECT COUNT(*) FROM fetch_progress").fetchone()
         return row[0]
 
+    def get_latest_epoch(self) -> str | None:
+        """Return the latest EPOCH in gp_history, or None if empty."""
+        row = self._conn.execute("SELECT MAX(EPOCH) FROM gp_history").fetchone()
+        return row[0] if row and row[0] else None
+
+    def get_starlink_norad_ids(self) -> set[int]:
+        """Return the set of all NORAD_CAT_IDs in the satellites table."""
+        rows = self._conn.execute("SELECT NORAD_CAT_ID FROM satellites").fetchall()
+        return {row[0] for row in rows}
+
     def close(self) -> None:
         self._conn.close()
         logger.info("Database closed")

@@ -7,6 +7,7 @@ WHOAMI_URL = f"{BASE_URL}/app/data/whoami"
 QUERY_URL = f"{BASE_URL}/basicspacedata/query"
 
 DEFAULT_DB_PATH = "data/starloom.db"
+DEFAULT_BULK_DIR = "data/bulk"
 
 # Rate limits (actual: 30/min, 300/hr)
 # We pace evenly at 200/hr = 1 request per 18 seconds, which also stays

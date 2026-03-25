@@ -34,6 +34,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
             start_date=args.start_date,
             end_date=args.end_date,
             dry_run=args.dry_run,
+            bulk_dir=args.bulk_dir,
         )
     except KeyboardInterrupt:
         logging.info("Interrupted — progress has been saved")
@@ -93,6 +94,8 @@ def main() -> None:
     p_fetch.add_argument("--start-date", help="Start date (default: per satellite launch date)")
     p_fetch.add_argument("--end-date", help="End date (default: today)")
     p_fetch.add_argument("--dry-run", action="store_true", help="Show plan without fetching")
+    p_fetch.add_argument("--bulk-dir", default=config.DEFAULT_BULK_DIR,
+                         help="Directory of bulk TLE zip/txt files to import first")
 
     # status
     p_status = sub.add_parser("status", help="Show fetch progress")
@@ -106,6 +109,17 @@ def main() -> None:
     p_import = sub.add_parser("import-launches", help="Import launch data from xlsx")
     p_import.add_argument("xlsx", help="Path to starlink_launches.xlsx")
     p_import.add_argument("--db", default=config.DEFAULT_DB_PATH)
+
+    # import-bulk
+    p_bulk = sub.add_parser("import-bulk", help="Import bulk TLE zip/text files")
+    p_bulk.add_argument("path", help="Directory of zip/txt files, or a single file")
+    p_bulk.add_argument("--db", default=config.DEFAULT_DB_PATH)
+
+    # verify-bulk
+    p_verify = sub.add_parser("verify-bulk", help="Verify bulk TLE data against API records")
+    p_verify.add_argument("path", help="Bulk TLE file to verify")
+    p_verify.add_argument("--db", default=config.DEFAULT_DB_PATH)
+    p_verify.add_argument("--sample-size", type=int, default=200, help="Number of pairs to compare")
 
     # render
     p_render = sub.add_parser("render", help="Render a single frame")
@@ -139,6 +153,24 @@ def main() -> None:
         db = Database(args.db)
         try:
             import_launches(db, args.xlsx)
+        finally:
+            db.close()
+    elif args.command == "import-bulk":
+        from .bulk_import import import_bulk
+        db = Database(args.db)
+        try:
+            import_bulk(db, args.path)
+            latest = db.get_latest_epoch()
+            if latest:
+                print(f"\nLatest epoch in database: {latest[:10]}")
+                print("Run 'starloom fetch' to pick up from where bulk data ends.")
+        finally:
+            db.close()
+    elif args.command == "verify-bulk":
+        from .verify_bulk import verify_bulk
+        db = Database(args.db)
+        try:
+            verify_bulk(db, args.path, sample_size=args.sample_size)
         finally:
             db.close()
     elif args.command == "render":
